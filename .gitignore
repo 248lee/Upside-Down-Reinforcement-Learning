@@ -1,0 +1,6 @@
+# models
+model.pth
+behaviorfunction.pth
+
+# wandbs
+wandb/*
