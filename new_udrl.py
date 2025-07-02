@@ -20,6 +20,7 @@ state_space = env.observation_space.shape[0]
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+gamma = 1
 max_reward = 200
 horizon_scale = 0.02
 return_scale = 0.02
@@ -91,14 +92,14 @@ class ReplayBuffer():
         self.buffer = []
         
         
-    def add_sample(self, states, actions, rewards):
-        episode = {"states": states, "actions":actions, "rewards": rewards, "summed_rewards":sum(rewards)}
+    def add_sample(self, states, actions, rewards, return_to_goes):
+        episode = {"states": states, "actions":actions, "rewards": rewards, "return_to_goes": return_to_goes}
         self.buffer.append(episode)
         
     
     def sort(self):
-        #sort buffer
-        self.buffer = sorted(self.buffer, key = lambda i: i["summed_rewards"],reverse=True)
+        #sort buffer with the highest return-to-go
+        self.buffer = sorted(self.buffer, key = lambda i: i["return_to_goes"][0],reverse=True)
         # keep the max buffer size
         self.buffer = self.buffer[:self.max_size]
     
@@ -170,14 +171,14 @@ def sampling_exploration( top_X_eps = last_few):
     #The exploratory desired horizon dh0 is set to the mean of the lengths of the selected episodes
     new_desired_horizon = np.mean([len(i["states"]) for i in top_X])
     # save all top_X cumulative returns in a list 
-    returns = [i["summed_rewards"] for i in top_X]
+    returns = [i["return_to_goes"][0] for i in top_X]
     # from these returns calc the mean and std
     mean_returns = np.mean(returns)
     std_returns = np.std(returns)
     # sample desired reward from a uniform distribution given the mean and the std
     new_desired_reward = np.random.uniform(mean_returns, mean_returns+std_returns)
 
-    return torch.FloatTensor([new_desired_reward])  , torch.FloatTensor([new_desired_horizon]) 
+    return torch.tensor([new_desired_reward], dtype=torch.float32)  , torch.tensor([new_desired_horizon], dtype=torch.float32) 
 
 # %%
 # FUNCTIONS FOR TRAINING
@@ -206,10 +207,10 @@ def create_training_input(episode, t1, t2):
     buffer episodes are build like [cumulative episode reward, states, actions, rewards]
     """
     state = episode["states"][t1] 
-    desired_reward = sum(episode["rewards"][t1:t2])
+    desired_return_to_go = sum(episode["rewards"][t1:t2])  # This should be changed to return-to-go later
     time_horizont = t2-t1
     action = episode["actions"][t1]
-    return state, desired_reward, time_horizont, action
+    return state, desired_return_to_go, time_horizont, action
 
 def create_training_examples(batch_size):
     """
@@ -220,7 +221,7 @@ def create_training_examples(batch_size):
     3. for the selected episode and sampled t1 and t2 trainings values are gathered
     ______________________________________________________________
     Output are two numpy arrays in the length of batch size:
-    Input Array for the Behavior function - consisting of (state, desired_reward, time_horizon)
+    Input Array for the Behavior function - consisting of (state, desired_return_to_go, time_horizon)
     Output Array with the taken actions 
     """
     input_array = []
@@ -232,8 +233,8 @@ def create_training_examples(batch_size):
         t1, t2, T = select_time_steps(ep)
         # For episodic tasks they set t2 to T:
         t2 = T
-        state, desired_reward, time_horizont, action = create_training_input(ep, t1, t2)
-        input_array.append(torch.cat([state, torch.FloatTensor([desired_reward]), torch.FloatTensor([time_horizont])]))
+        state, desired_return_to_go, time_horizont, action = create_training_input(ep, t1, t2)
+        input_array.append(torch.cat([state, torch.tensor([desired_return_to_go], dtype=torch.float32), torch.tensor([time_horizont], dtype=torch.float32)]))
         output_array.append(action)
     return input_array, output_array
 
@@ -252,25 +253,25 @@ def train_behavior_function(batch_size):
     y = torch.stack(y).long()
     y_ = bf(state.to(device), command.to(device)).float()
     optimizer.zero_grad()
-    pred_loss = F.cross_entropy(y_, y)   
+    pred_loss = F.cross_entropy(y_, y)  
     pred_loss.backward()
     optimizer.step()
     return pred_loss.detach().cpu().numpy()
 
 # %%
-def evaluate(desired_return: torch.FloatTensor, desired_time_horizon: torch.FloatTensor):
+def evaluate(desired_return: torch.Tensor, desired_time_horizon: torch.Tensor):
     """
     Runs one episode of the environment to evaluate the bf.
     """
     state, _ = env.reset()
     rewards = 0
     while True:
-        state = torch.FloatTensor(state)
+        state = torch.tensor(state, dtype=torch.float32)
         action = bf.action(state.to(device), desired_return.to(device), desired_time_horizon.to(device))
         state, reward, done, trunc, info = env.step(action.cpu().numpy()) 
         rewards += reward
-        desired_return = min(desired_return - reward, torch.FloatTensor([max_reward]))
-        desired_time_horizon = max(desired_time_horizon - 1, torch.FloatTensor([1]))
+        desired_return = min(desired_return - reward, torch.tensor([max_reward], dtype=torch.float32))
+        desired_time_horizon = max(desired_time_horizon - 1, torch.tensor([1], dtype=torch.float32))
         
         if done or trunc:
             break 
@@ -282,7 +283,7 @@ def evaluate(desired_return: torch.FloatTensor, desired_time_horizon: torch.Floa
 
 # %%
 # Algorithm 2 - Generates an Episode unsing the Behavior Function:
-def generate_episode(desired_return: torch.FloatTensor, desired_time_horizon: torch.FloatTensor):    
+def generate_episode(bf: BF, desired_return: torch.Tensor, desired_time_horizon: torch.Tensor):    
     """
     Generates more samples for the replay buffer.
     """
@@ -290,23 +291,37 @@ def generate_episode(desired_return: torch.FloatTensor, desired_time_horizon: to
     states = []
     actions = []
     rewards = []
+    
     while True:
-        state = torch.FloatTensor(state)
-
-        action = bf.action(state.to(device), desired_return.to(device), desired_time_horizon.to(device))
-        next_state, reward, done, trunc, info = env.step(action.cpu().numpy())
+        state = torch.tensor(state, dtype=torch.float32)
+        # get action from the behavior function, if any
+        if bf is None:  # if warmup, use random actions
+            action = env.action_space.sample()
+            next_state, reward, done, trunc, info = env.step(action)
+            action = torch.tensor(action, dtype=torch.float32).to(device)
+        else:
+            action = bf.action(state.to(device), desired_return.to(device), desired_time_horizon.to(device))
+            next_state, reward, done, trunc, info = env.step(action.cpu().numpy())
         states.append(state)
         actions.append(action)
         rewards.append(reward)
-        
+
         state = next_state
-        desired_return -= reward
-        desired_time_horizon -= 1
-        desired_time_horizon = torch.FloatTensor([np.maximum(desired_time_horizon, 1).item()])
+
+        if bf is not None:  # if not warmup
+            # Update the desired return and time horizon
+            desired_return = (desired_return - reward) / gamma
+            desired_time_horizon -= 1
+            desired_time_horizon = torch.tensor([np.maximum(desired_time_horizon, 1).item()], dtype=torch.float32)
         
         if done or trunc:
             break 
-    return [states, actions, rewards]
+    
+    # Calculate the return-to-go in an reverse manner
+    return_to_go = [0] * (len(rewards) + 1)  # +1 to handle the next of the last state, which is conviniently 0
+    for t in reversed(range(len(rewards))):
+        return_to_go[t] = rewards[t] + gamma * return_to_go[t + 1]
+    return states, actions, rewards, return_to_go[:-1]  # Exclude the last element which is 0
 
 
 # Algorithm 1 - Upside - Down Reinforcement Learning 
@@ -334,8 +349,8 @@ def run_upside_down(max_episodes):
             
             # Sample exploratory commands based on buffer
             new_desired_reward, new_desired_horizon = sampling_exploration()
-            generated_episode = generate_episode(new_desired_reward, new_desired_horizon)
-            buffer.add_sample(generated_episode[0],generated_episode[1],generated_episode[2])
+            states, actions, rewards, return_to_goes = generate_episode(bf, new_desired_reward, new_desired_horizon)
+            buffer.add_sample(states, actions, rewards, return_to_goes)
             
         new_desired_reward, new_desired_horizon = sampling_exploration()
         # monitoring desired reward and desired horizon
@@ -383,7 +398,10 @@ if __name__ == "__main__":
     optimizer = optim.Adam(params=bf.parameters(), lr=1e-3)
 
     # Start training
-    warmup(bf, buffer)
+    for i in range(n_warm_up_episodes):
+        states, actions, rewards, return_to_goes = generate_episode(None, None, None)
+        buffer.add_sample(states, actions, rewards, return_to_goes)
+
     rewards, average, d, h, loss = run_upside_down(max_episodes=200)
 
     # Finish training
@@ -419,22 +437,22 @@ if __name__ == "__main__":
     # ## EVALUATION RUN
 
     # %%
-    DESIRED_REWARD = torch.FloatTensor([200]).to(device)
-    DESIRED_HORIZON = torch.FloatTensor([200]).to(device)
-    desired = DESIRED_REWARD.item()
+    DESIRED_RETURN_TO_GO = torch.tensor([200], dtype=torch.float32).to(device)
+    DESIRED_HORIZON = torch.tensor([200], dtype=torch.float32).to(device)
+    desired = DESIRED_RETURN_TO_GO.item()
 
     env = gym.make('CartPole-v0')
     env.reset()
     rewards = 0
     while True:
-        command = torch.cat((DESIRED_REWARD*return_scale,DESIRED_HORIZON*horizon_scale), dim=-1)
+        command = torch.cat((DESIRED_RETURN_TO_GO*return_scale,DESIRED_HORIZON*horizon_scale), dim=-1)
 
         probs_logits = bf(torch.from_numpy(state).float().to(device), command)
         probs = torch.softmax(probs_logits, dim=-1).detach().cpu()
         action = torch.argmax(probs).item()
         state, reward, done, trunc, info = env.step(action)
         rewards += reward
-        DESIRED_REWARD -= reward
+        DESIRED_RETURN_TO_GO -= reward
         DESIRED_HORIZON -= 1
         if done or trunc:
             break
