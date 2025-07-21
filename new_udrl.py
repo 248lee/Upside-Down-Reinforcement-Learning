@@ -29,13 +29,13 @@ max_reward = 200
 return_scale = 0.02
 replay_size = 700
 n_warm_up_episodes = 50
-n_updates_per_iter = 200
-n_episodes_per_iter = 20
+n_updates_per_iter = 500
+n_rollout_steps_per_iter = 2000
 top_X_eps = 50
 batch_size = 40
-learning_rate=1e-4
+learning_rate=1e-5
 gae_lambda = 0.9
-clip_range = 0.15
+clip_range = 0.2
 
 
 # %%
@@ -142,7 +142,8 @@ def run_upside_down(max_episodes):
         rewards_rollout = []
         dones_rollout = []
 
-        for i in range(n_episodes_per_iter):
+        rollout_step_count = 0
+        while rollout_step_count < n_rollout_steps_per_iter:
             
             # Sample exploratory commands based on buffer
             new_desired_reward = replaybuffer.sampling_exploration(top_X_eps)
@@ -158,7 +159,7 @@ def run_upside_down(max_episodes):
                 return_to_goes,
                 dones
             ) = generate_episode(bf, desired_return=new_desired_reward)
-
+            rollout_step_count += len(rewards)
             ewma_G = 0.05 * return_to_goes[0] + (1 - 0.05) * ewma_G
             replaybuffer.add_sample(states, actions, rewards, return_to_goes)
             
@@ -188,19 +189,30 @@ def run_upside_down(max_episodes):
         pg_loss_buffer = []
         vl_loss_buffer = []
         bf_loss_buffer = []
-        for _ in range(n_updates_per_iter):
+        for iter in range(n_updates_per_iter):
             optimizer.zero_grad()
 
             # Calculate the supervised loss
             # Sample a batch from the replay buffer
             input_states, input_commands, output_array = replaybuffer.create_training_examples(batch_size, device=device)
             bf_loss = suploss.CalculateLoss(bf, input_states, input_commands, output_array)
-            bf_loss = torch.tensor(0).to(device)
+            # bf_loss = torch.tensor(0).to(device)
 
             # Calculate the policy gradient loss and value loss
             # Sample a batch from the rollout buffer
             batch_of_data = rolloutbuffer.SampleBatch(batch_size, device)
             pg_loss, vl_loss = udppo.CalculateLoss(bf, batch_of_data, clip_range)
+
+            if iter == 0:
+                with torch.no_grad():
+                    testing_batch_of_data = rolloutbuffer.SampleBatchGivenIndices(np.linspace(0, 300, 15, dtype=np.int64), device)
+                    pg_loss_start, vl_loss_start = udppo.CalculateLoss(bf, testing_batch_of_data, clip_range)
+            elif iter == n_updates_per_iter - 1:
+                with torch.no_grad():
+                    testing_batch_of_data = rolloutbuffer.SampleBatchGivenIndices(np.linspace(0, 300, 15, dtype=np.int64), device)
+                    pg_loss_end, vl_loss_end = udppo.CalculateLoss(bf, testing_batch_of_data, clip_range)
+            else:
+                pass
 
             # Combine the losses
             total_loss = bf_loss + pg_loss + vl_loss
@@ -223,8 +235,8 @@ def run_upside_down(max_episodes):
             "pg_loss": pg_loss,
             "vl_loss": vl_loss,
             "bf_loss": bf_loss,
-            "pg_update extent": pg_loss_buffer[0] - pg_loss_buffer[-1],
-            "vl_update extent": vl_loss_buffer[0] - vl_loss_buffer[-1]
+            "pg_update extent": pg_loss_start - pg_loss_end,
+            "vl_update extent": vl_loss_start - vl_loss_end
         })
         
         # monitoring desired reward and desired horizon
@@ -253,7 +265,7 @@ if __name__ == "__main__":
                     "replay_size": replay_size,
                     "n_warm_up_episodes": n_warm_up_episodes,
                     "n_updates_per_iter": n_updates_per_iter,
-                    "n_episodes_per_iter": n_episodes_per_iter,
+                    "n_rollout_steps_per_iter": n_rollout_steps_per_iter,
                     "top_X_eps": top_X_eps,
                     "batch_size": batch_size,
                     "learning_rate": learning_rate,

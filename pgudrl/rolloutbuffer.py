@@ -67,3 +67,15 @@ class RolloutBuffer:
             'desired_returns': torch.tensor(self.desired_returns[batch_indices].astype(np.float32)).to(device),
             'advantages': torch.tensor(self.advantages[batch_indices].astype(np.float32)).to(device)
         }
+    
+    def SampleBatchGivenIndices(self, batch_indices, device):
+        return {
+            'states': torch.tensor(self.states[batch_indices].astype(np.float32)).to(device),
+            'actions': torch.tensor(self.actions[batch_indices].astype(np.float32)).to(device),
+            'log_probs': torch.tensor(self.log_probs[batch_indices].astype(np.float32)).to(device),
+            # 'rewards': torch.tensor(self.rewards[batch_indices].astype(np.float32)).to(device),
+            'values': torch.tensor(self.values[batch_indices].astype(np.float32)).to(device),
+            # 'next_values': torch.tensor(self.next_values[batch_indices].astype(np.float32)).to(device),
+            'desired_returns': torch.tensor(self.desired_returns[batch_indices].astype(np.float32)).to(device),
+            'advantages': torch.tensor(self.advantages[batch_indices].astype(np.float32)).to(device)
+        }
