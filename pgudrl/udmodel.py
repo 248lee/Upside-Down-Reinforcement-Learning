@@ -13,11 +13,14 @@ class BF(nn.Module):
         self.action_space = action_space
         self.fc1 = nn.Linear(state_space, hidden_size)
         self.commands = nn.Linear(1, hidden_size)  # Here, we assume 1 command: desired return
-        self.fc2 = nn.Linear(hidden_size, 32)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, hidden_size)
 
-        self.actor_fc5 = nn.Linear(32, action_space)
+        self.actor_fc4 = nn.Linear(hidden_size, hidden_size)
+        self.actor_fc5 = nn.Linear(hidden_size, action_space)
         
-        self.critic_fc5 = nn.Linear(32, 1)
+        self.critic_fc4 = nn.Linear(hidden_size, hidden_size)
+        self.critic_fc5 = nn.Linear(hidden_size, 1)
 
         self.sigmoid = nn.Sigmoid()
         
@@ -26,13 +29,16 @@ class BF(nn.Module):
         out = self.sigmoid(self.fc1(state))
         command_out = self.sigmoid(self.commands(command))
         out = out * command_out
-        feature = torch.relu(self.fc2(out))
+        out = torch.relu(self.fc2(out))
+        feature = torch.relu(self.fc3(out))
 
         # Actor
-        actor_out = self.actor_fc5(feature)
+        actor_out = torch.relu(self.actor_fc4(feature))
+        actor_out = self.actor_fc5(actor_out)
 
         # Critic
-        critic_out = self.critic_fc5(feature)
+        critic_out = torch.relu(self.critic_fc4(feature))
+        critic_out = self.critic_fc5(critic_out)
         
         return actor_out, critic_out
     

@@ -7,8 +7,7 @@ class ReplayBuffer():
         self.buffer = []
         
         
-    def add_sample(self, states, actions, rewards, return_to_goes):
-        episode = {"states": states, "actions":actions, "rewards": rewards, "return_to_goes": return_to_goes}
+    def add_sample(self, episode):
         self.buffer.append(episode)
         
     
@@ -19,7 +18,8 @@ class ReplayBuffer():
         self.buffer = self.buffer[:self.max_size]
     
     def get_random_samples(self, batch_size):
-        self.sort()
+        # self.sort()
+        self.buffer = self.buffer[:self.max_size]
         idxs = np.random.randint(0, len(self.buffer), batch_size)
         batch = [self.buffer[idx] for idx in idxs]
         return batch
