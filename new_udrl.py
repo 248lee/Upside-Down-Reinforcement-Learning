@@ -20,23 +20,23 @@ import pgudrl.ovntrain as ovntrain
 
 from pgudrl.rolloutbuffer import RolloutBuffer
 
-env = gym.make("CartPole-v0")
+env = gym.make("LunarLander-v3")
 action_space = env.action_space.n
 state_space = env.observation_space.shape[0]
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-gamma = 0.9
+gamma = 0.98
 max_reward = 200
 return_scale = 0.02
 replay_size = 700
 n_warm_up_episodes = 50
 n_updates_per_iter = 500
-n_rollout_steps_per_iter = 2000
+n_rollout_steps_per_iter = 4000
 top_X_eps = 50
-batch_size = 40
-learning_rate=1e-3
-ovn_update_rate = 5e-3
+batch_size = 128
+learning_rate=1e-4
+ovn_update_rate = 5e-4
 gae_lambda = 0.9
 opt_lambda = 0.9
 clip_range = 0.2
