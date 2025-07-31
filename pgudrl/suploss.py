@@ -21,8 +21,9 @@ def CalculateLoss(bf: BF, ovn: OptimisticValueNetwork, batch: ReplayBufferSample
     pred_loss = F.cross_entropy(y_, y)
 
     # Exploration loss for the Behavior Function
+    ovn_tmp = ovn(state)
     with torch.no_grad():
-        desired_return_to_go = ovn(state)
+        desired_return_to_go = ovn_tmp.detach().clone()  # Get the desired return to go from the optimistic value network
         command_exploratory = desired_return_to_go * bf.return_scale
     
     y_tmp, q_tmp = bf(state.to(bf.device), command_exploratory.to(bf.device))
@@ -56,5 +57,10 @@ def CalculateLoss(bf: BF, ovn: OptimisticValueNetwork, batch: ReplayBufferSample
         targets = batch.rewards + bf.gamma * next_value * (1 - batch.dones)
     q_values_selected = torch.gather(q_tmp, 1, batch.actions.to(torch.int64).unsqueeze(1))
     value_loss = F.mse_loss(q_values_selected, targets.detach())
+
+    # Optimistic value network loss
+    with torch.no_grad():
+        ovn_target = torch.max(q_tmp, dim=1, keepdim=True)[0]  # Get the maximum q-value for the optimistic value network
+    ovn_loss = F.mse_loss(ovn_tmp, ovn_target)
     
-    return pred_loss, exploration_loss, value_loss
+    return pred_loss, exploration_loss, value_loss, ovn_loss

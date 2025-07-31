@@ -159,12 +159,12 @@ def run_upside_down(max_episodes):
     ewma_T = 0
 
     for ep in range(1, max_episodes+1):
-        rollout = {
-            "observations": [],
-            "rewards": [],
-            "dones": [],
-            "next_observations": []
-        }
+        # rollout = {
+        #     "observations": [],
+        #     "rewards": [],
+        #     "dones": [],
+        #     "next_observations": []
+        # }
 
         rollout_step_count = 0
         while rollout_step_count < n_rollout_steps_per_iter:
@@ -177,12 +177,12 @@ def run_upside_down(max_episodes):
             ewma_T = 0.05 * episode["T"] + (1 - 0.05) * ewma_T
             replaybuffer.add_sample(episode)
             
-            rollout["observations"].extend(episode["observations"])
-            rollout["rewards"].extend(episode["rewards"])
-            rollout["dones"].extend(episode["dones"])
-            rollout["next_observations"].extend(episode["next_observations"])
+        #     rollout["observations"].extend(episode["observations"])
+        #     rollout["rewards"].extend(episode["rewards"])
+        #     rollout["dones"].extend(episode["dones"])
+        #     rollout["next_observations"].extend(episode["next_observations"])
 
-        rolloutbuffer = RolloutBuffer(rollout, gamma=gamma)
+        # rolloutbuffer = RolloutBuffer(rollout, gamma=gamma)
             
         # Calculate losses
         explore_loss_buffer = []
@@ -190,11 +190,12 @@ def run_upside_down(max_episodes):
         bf_loss_buffer = []
         for iter in range(bf_n_updates_per_iter):
             optimizer_bf.zero_grad()
+            optimizer_ovn.zero_grad()
 
             # Calculate the supervised loss
             # Sample a batch from the replay buffer
             batch = replaybuffer.SampleBatch(batch_size)
-            bf_loss, explore_loss, q_loss = suploss.CalculateLoss(bf, ovn, batch)
+            bf_loss, explore_loss, q_loss, ovn_loss = suploss.CalculateLoss(bf, ovn, batch)
             # bf_loss = torch.tensor(0).to(device)
 
             # Combine the losses
@@ -202,21 +203,16 @@ def run_upside_down(max_episodes):
             total_loss.backward()
             optimizer_bf.step()
 
+            # Update the optimistic value network
+            ovn_loss.backward()
+            optimizer_ovn.step()
+
             # Log the loss
             bf_loss_buffer.append(bf_loss.item())
             explore_loss_buffer.append(explore_loss.item())
             q_loss_buffer.append(q_loss.item())
 
-        for iter in range(ovn_n_updates_per_iter):
-            optimizer_ovn.zero_grad()
-            # Calculate the loss of optimistic value network
-            batch_of_data = rolloutbuffer.SampleBatch(batch_size, device)
-            is_optimistic = ep > 20
-            ovn_loss = ovntrain.CalculateLoss(ovn, batch_of_data, gamma, is_optimistic)
-
-            ovn_loss.backward()
-            optimizer_ovn.step()
-        
+            
         explore_loss = np.mean(explore_loss_buffer)
         explore_losses.append(explore_loss)
         q_loss = np.mean(q_loss_buffer)
