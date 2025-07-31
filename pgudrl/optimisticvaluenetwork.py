@@ -3,7 +3,7 @@ import torch
 import numpy as np
 
 class OptimisticValueNetwork(nn.Module):
-    def __init__(self, state_space, action_space, hidden_size, seed, device):
+    def __init__(self, state_space, action_space, hidden_size, gamma, seed, device):
         super(OptimisticValueNetwork, self).__init__()
         torch.manual_seed(seed)
         self.device = device
@@ -12,6 +12,8 @@ class OptimisticValueNetwork(nn.Module):
         self.fc1 = nn.Linear(state_space, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         self.fc3 = nn.Linear(hidden_size, 1)
+
+        self.gamma = gamma
 
         
     def forward(self, state):       

@@ -1,35 +1,97 @@
 import numpy as np
 import torch
+from typing import NamedTuple
+from gymnasium import spaces
+
+class ReplayBufferSamples(NamedTuple):
+    observations: torch.Tensor
+    actions: torch.Tensor
+    next_observations: torch.Tensor
+    dones: torch.Tensor
+    rewards: torch.Tensor
+    return_to_goes: torch.Tensor
 
 class ReplayBuffer():
-    def __init__(self, max_size):
-        self.max_size = max_size
-        self.buffer = []
+
+    
+    def __init__(
+        self,
+        buffer_size: int,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        device: str
+    ):
+        self.buffer = {
+            "observations": np.zeros((buffer_size, *observation_space.shape), dtype=np.float32),
+            "next_observations": np.zeros((buffer_size, *observation_space.shape), dtype=np.float32),
+            "actions": np.zeros((buffer_size, *action_space.shape), dtype=np.float32),
+            "rewards": np.zeros((buffer_size, 1), dtype=np.float32),
+            "dones": np.zeros((buffer_size, 1), dtype=np.float32),
+            "return_to_goes": np.zeros((buffer_size, 1), dtype=np.float32),
+        }
+
+        self.pos = 0  # This is the pointer of the next sample to be added
+        self.buffer_size = buffer_size  # This is the maximum size of the buffer
+        self.full = False  # This is a flag to indicate if the buffer is full
+        self.device = device
+
+    def to_torch(self, array: np.ndarray, copy: bool = True) -> torch.Tensor:
+        """
+        Convert a numpy array to a PyTorch tensor.
+        Note: it copies the data by default
+
+        :param array:
+        :param copy: Whether to copy or not the data (may be useful to avoid changing things
+            by reference). This argument is inoperative if the device is not the CPU.
+        :return:
+        """
+        if copy:
+            return torch.tensor(array, device=self.device)
+        return torch.as_tensor(array, device=self.device)
         
         
     def add_sample(self, episode):
-        self.buffer.append(episode)
+        # Check that `episode` is a dictionary with the expected keys
+        for key in self.buffer.keys():
+            if key not in episode:
+                raise ValueError(f"Episode must contain the key: {key}")
+                return
+            episode[key] = np.array(episode[key])  # Convert the list to nd-array
+
+        length_of_episode = len(episode["observations"])
+        # add the episode to the buffer
+        if self.pos + length_of_episode >= self.buffer_size:  # If the episode is longer than the remaining space in the buffer
+            for key in self.buffer.keys():
+                # Firstly, fill up whole buffer
+                self.buffer[key][self.pos:self.buffer_size] = episode[key][:self.buffer_size - self.pos]
+                # Next, fill the rest of the episode into the beginning of the buffer
+                self.buffer[key][:length_of_episode - (self.buffer_size - self.pos)] = episode[key][self.buffer_size - self.pos:]
+            self.full = True  # If the buffer is full, set the flag to True
+            self.pos = length_of_episode - (self.buffer_size - self.pos)  # Reset the position to the end of the episode
+        else:
+            for key in self.buffer.keys():
+                self.buffer[key][self.pos:self.pos + length_of_episode] = episode[key]
+            self.pos += length_of_episode
         
     
-    def sort(self):
-        #sort buffer with the highest return-to-go
-        self.buffer = sorted(self.buffer, key = lambda i: i["return_to_goes"][0],reverse=True)
-        # keep the max buffer size
-        self.buffer = self.buffer[:self.max_size]
-    
-    def get_random_samples(self, batch_size):
+    def SampleBatch(self, batch_size):
         # self.sort()
-        self.buffer = self.buffer[:self.max_size]
-        idxs = np.random.randint(0, len(self.buffer), batch_size)
-        batch = [self.buffer[idx] for idx in idxs]
-        return batch
+        upper_bound = self.buffer_size if self.full else self.pos
+        batch_inds = np.random.randint(0, upper_bound, size=batch_size)
+
+        data = (
+            self.buffer["observations"][batch_inds],
+            self.buffer["actions"][batch_inds],
+            self.buffer["next_observations"][batch_inds],
+            self.buffer["dones"][batch_inds],
+            self.buffer["rewards"][batch_inds],
+            self.buffer["return_to_goes"][batch_inds]
+        )
+        return ReplayBufferSamples(*map(self.to_torch, data))
     
-    def get_nbest(self, n):
-        self.sort()
-        return self.buffer[:n]
     
     def __len__(self):
-        return len(self.buffer)
+        return len(self.buffer_size) if self.full else self.pos
     
     def sampling_exploration(self, top_X_eps):
         """
@@ -84,7 +146,7 @@ def select_time_steps(saved_episode):
     Returns t
     """
     # Select times in the episode:
-    T = len(saved_episode["states"]) # episode max horizon 
+    T = len(saved_episode["observations"]) # episode max horizon 
     t = np.random.randint(0,T-1)
 
     return t
@@ -97,9 +159,9 @@ def create_training_input(episode, t):
     3. the time horizon T (legacy)
     4. the target action taken at t
     
-    buffer episodes are build like [cumulative episode reward, states, actions, rewards]
+    buffer episodes are build like [cumulative episode reward, observations, actions, rewards]
     """
-    state = episode["states"][t] 
+    state = episode["observations"][t] 
     desired_return_to_go = episode["return_to_goes"][t]  # this is the cumulative return from t to the end of the episode
     action = episode["actions"][t]
     return state, desired_return_to_go, action

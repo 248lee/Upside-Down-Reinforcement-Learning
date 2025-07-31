@@ -1,1 +1,1 @@
-import stable_baselines3.ppo as ppo
+import stable_baselines3.dqn as dqn

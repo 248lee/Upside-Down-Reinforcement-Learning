@@ -3,8 +3,8 @@ import torch
 import numpy as np
 from torch.distributions import Categorical
 
-class BF(nn.Module):
-    def __init__(self, state_space, action_space, hidden_size, return_scale, seed, device):
+class BF(nn.Module):  # "actor" is an alias of policy, and "critic" is an alias of q-value function
+    def __init__(self, state_space, action_space, hidden_size, return_scale, gamma, seed, device):
         super(BF, self).__init__()
         torch.manual_seed(seed)
         self.return_scale = return_scale
@@ -20,9 +20,11 @@ class BF(nn.Module):
         self.actor_fc5 = nn.Linear(hidden_size, action_space)
         
         self.critic_fc4 = nn.Linear(hidden_size, hidden_size)
-        self.critic_fc5 = nn.Linear(hidden_size, 1)
+        self.critic_fc5 = nn.Linear(hidden_size, action_space)
 
         self.sigmoid = nn.Sigmoid()
+
+        self.gamma = gamma
         
     def forward(self, state, command):       
                
@@ -47,22 +49,22 @@ class BF(nn.Module):
         Samples the action based on their probability
         """
         command = (desire*self.return_scale)
-        action_prob, state_value = self.forward(state, command)
+        action_prob, q_value = self.forward(state, command)
         probs = torch.softmax(action_prob, dim=-1)
         m = Categorical(probs)
         action = m.sample()
-        return action, m.log_prob(action), state_value
+        return action, m.log_prob(action), q_value
     
-    def forward_to_get_logprob_and_value(self, state, desire, action):
+    def forward_to_get_logprob_and_q_value(self, state, desire, action):
         """
         Returns the log probability of the action and the state value
         """
         command = (desire*self.return_scale)
-        action_prob, state_value = self.forward(state, command)
+        action_prob, q_value = self.forward(state, command)
         probs = torch.softmax(action_prob, dim=-1)
         m = Categorical(probs)
         log_prob = m.log_prob(action)
-        return log_prob, state_value
+        return log_prob, q_value[action]
     
     def greedy_action(self, state, desire):
         """
