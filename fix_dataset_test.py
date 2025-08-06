@@ -40,7 +40,7 @@ optimizer_bf = optim.Adam(params=bf.parameters(), lr=learning_rate)
 ovn = OptimisticValueNetwork(state_space, action_space, hidden_size=64, gamma=gamma, seed=1, device=device).to(device)
 optimizer_ovn = optim.SGD(params=ovn.parameters(), lr=ovn_update_rate)
 
-for iter in tqdm(range(500)):
+for iter in tqdm(range(500 * 800)):
     optimizer_bf.zero_grad()
     optimizer_ovn.zero_grad()
 
