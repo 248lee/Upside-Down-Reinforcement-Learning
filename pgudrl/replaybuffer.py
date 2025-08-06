@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from typing import NamedTuple
 from gymnasium import spaces
+import pickle
 
 class ReplayBufferSamples(NamedTuple):
     observations: torch.Tensor
@@ -89,6 +90,17 @@ class ReplayBuffer():
         )
         return ReplayBufferSamples(*map(self.to_torch, data))
     
+    def GetAllData(self):
+        data = (
+            self.buffer["observations"],
+            self.buffer["actions"],
+            self.buffer["next_observations"],
+            self.buffer["dones"],
+            self.buffer["rewards"],
+            self.buffer["return_to_goes"],
+        )
+        return ReplayBufferSamples(*map(self.to_torch, data))
+    
     
     def __len__(self):
         return len(self.buffer_size) if self.full else self.pos
@@ -137,6 +149,10 @@ class ReplayBuffer():
             input_commands.append(torch.tensor(desired_return_to_go, dtype=torch.float32).to(device))
             output_array.append(torch.tensor(action, dtype=torch.float32).to(device))
         return input_states, input_commands, output_array
+
+    def save_replay_buffer(self, filepath: str):
+        with open(filepath, 'wb') as f:
+            pickle.dump(self, f)
     
 
 def select_time_steps(saved_episode):

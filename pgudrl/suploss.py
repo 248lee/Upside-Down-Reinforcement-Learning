@@ -64,3 +64,16 @@ def CalculateLoss(bf: BF, ovn: OptimisticValueNetwork, batch: ReplayBufferSample
     ovn_loss = F.mse_loss(ovn_tmp, ovn_target)
     
     return pred_loss, exploration_loss, value_loss, ovn_loss
+
+def test_accuracy(bf: BF, batch: ReplayBufferSamples):
+    with torch.no_grad():
+        state = batch.observations.detach().clone()
+        input_commands = batch.return_to_goes.detach().clone()
+        command = input_commands * bf.return_scale
+        y_ = bf(state.to(bf.device), command.to(bf.device))[0].float()  # Get only the action probabilities (the first output of the BF)
+        y = batch.actions.detach().clone().long()#.squeeze(-1)  # Convert y to be a 1D tensor
+        greedy_action = torch.argmax(y_, dim=1)
+        is_correct = torch.where(greedy_action == y, torch.ones_like(greedy_action), torch.zeros_like(greedy_action))
+        accuracy = torch.sum(is_correct).item() / is_correct.shape[0]
+
+        return accuracy, greedy_action, y

@@ -37,7 +37,7 @@ n_rollout_steps_per_iter = 256
 top_X_eps = 50
 batch_size = 64
 learning_rate=1e-4
-ovn_update_rate = 1e-4
+ovn_update_rate = 1e-5
 gae_lambda = 0.9
 opt_lambda = 0.9
 clip_range = 0.2
@@ -61,56 +61,60 @@ def generate_episode(bf: BF, ovn: OptimisticValueNetwork):
     """
     state, _ = env.reset()
     state = np.array(state, dtype=np.float32)
+    initial_state_tensor = torch.tensor(state.copy(), dtype=torch.float32).to(device)
     episode = {
         "observations": [],
         "next_observations": [],
-        "desired_returns": [],
+        # "desired_returns": [],
         "actions": [],
-        "log_probs": [],
+        # "log_probs": [],
         "rewards": [],
-        "state_values": [],
-        "optimistic_values": [],
+        # "state_values": [],
+        # "optimistic_values": [],
         "dones": [],
         "return_to_goes": None,
-        "next_values": None,
-        "next_optimistic_values": None
+        # "next_values": None,
+        # "next_optimistic_values": None
     }
     
     while True:
         state_tensor = torch.tensor(state, dtype=torch.float32).to(device)
-        if bf is None:  # warmup
+        # epsilon greedy exploration
+        epsilon = 0.01
+
+        if bf is None or np.random.rand() < epsilon:  # warmup
             action_no_grad = env.action_space.sample()
             action_no_grad = np.array([action_no_grad], dtype=np.int64).squeeze(0)
-            log_prob_no_grad = None
-            state_value_no_grad = None
-            optimistic_value_no_grad = None
-            desired_return_no_grad = None
+            # log_prob_no_grad = None
+            # state_value_no_grad = None
+            # optimistic_value_no_grad = None
+            # desired_return_no_grad = None
         else:
             with torch.no_grad():
                 optimistic_value = ovn(state_tensor)
                 desired_return = optimistic_value.detach().clone()
-                desired_return_no_grad = desired_return.detach().cpu().numpy()
+                # desired_return_no_grad = desired_return.detach().cpu().numpy()
             action, log_prob, state_value = bf.action(state_tensor, desired_return)
             action_no_grad = action.detach().cpu().numpy()
-            log_prob_no_grad = log_prob.detach().cpu().numpy()
-            state_value_no_grad = state_value.detach().cpu().numpy()
-            optimistic_value_no_grad = optimistic_value.detach().cpu().numpy()
+            # log_prob_no_grad = log_prob.detach().cpu().numpy()
+            # state_value_no_grad = state_value.detach().cpu().numpy()
+            # optimistic_value_no_grad = optimistic_value.detach().cpu().numpy()
         next_state, reward, done, trunc, info = env.step(action_no_grad)
         reward = np.array(reward, dtype=np.float32)
         if reward.ndim == 0:
             reward = np.array([reward], dtype=np.float32)
         episode["observations"].append(state)
         episode["next_observations"].append(next_state)
-        episode["desired_returns"].append(desired_return_no_grad)
-        episode["log_probs"].append(log_prob_no_grad)
+        # episode["desired_returns"].append(desired_return_no_grad)
+        # episode["log_probs"].append(log_prob_no_grad)
         episode["actions"].append(action_no_grad)  # This list adds a dimension to the actions
         episode["rewards"].append(reward)
-        episode["state_values"].append(state_value_no_grad)
-        episode["optimistic_values"].append(optimistic_value_no_grad)
+        # episode["state_values"].append(state_value_no_grad)
+        # episode["optimistic_values"].append(optimistic_value_no_grad)
         episode["dones"].append([1.0] if done else [0.0])
 
-        if bf is not None:
-            desired_return_no_grad = (desired_return_no_grad - reward) / gamma
+        # if bf is not None:
+        #     desired_return_no_grad = (desired_return_no_grad - reward) / gamma
 
         if done or trunc:
             break
@@ -126,21 +130,23 @@ def generate_episode(bf: BF, ovn: OptimisticValueNetwork):
     episode["return_to_goes"] = return_to_goes[:-1]
 
     # Calculate next_values and next_optimistic_values
-    episode["next_values"] = episode["state_values"][1:].copy()
-    episode["next_optimistic_values"] = episode["optimistic_values"][1:].copy()
-    if bf is not None:
-        if not done:
-            _, _, next_value = bf.action(torch.tensor(next_state, dtype=torch.float32).to(device), desired_return.to(device))
-            next_value = next_value.detach().cpu().numpy()
-            next_optimistic_value = ovn(torch.tensor(next_state, dtype=torch.float32).to(device))
-            next_optimistic_value = next_optimistic_value.detach().cpu().numpy()
-        else:
-            next_value = np.zeros_like(episode["state_values"][-1])
-            next_optimistic_value = np.zeros_like(episode["optimistic_values"][-1])
-        episode["next_values"].append(next_value)
-        episode["next_optimistic_values"].append(next_optimistic_value)
+    # episode["next_values"] = episode["state_values"][1:].copy()
+    # episode["next_optimistic_values"] = episode["optimistic_values"][1:].copy()
+    # if bf is not None:
+    #     if not done:
+    #         _, _, next_value = bf.action(torch.tensor(next_state, dtype=torch.float32).to(device), desired_return.to(device))
+    #         next_value = next_value.detach().cpu().numpy()
+    #         next_optimistic_value = ovn(torch.tensor(next_state, dtype=torch.float32).to(device))
+    #         next_optimistic_value = next_optimistic_value.detach().cpu().numpy()
+    #     else:
+    #         # next_value = np.zeros_like(episode["state_values"][-1])
+    #         next_optimistic_value = np.zeros_like(episode["optimistic_values"][-1])
+        # episode["next_values"].append(next_value)
+        # episode["next_optimistic_values"].append(next_optimistic_value)
 
-        episode["T"] = len(episode["rewards"])
+    episode["T"] = len(episode["rewards"])
+    if ovn is not None:
+        episode["first_desired_return"] = ovn(initial_state_tensor).detach().cpu().numpy()
 
     return episode
 
@@ -157,6 +163,7 @@ def run_upside_down(max_episodes):
     desired_rewards_history = []
     ewma_G = 0
     ewma_T = 0
+    store_replay_buffer = False
 
     for ep in range(1, max_episodes+1):
         # rollout = {
@@ -188,6 +195,10 @@ def run_upside_down(max_episodes):
         explore_loss_buffer = []
         q_loss_buffer = []
         bf_loss_buffer = []
+
+        if store_replay_buffer or ep == 858:
+            replaybuffer.save_replay_buffer("observe_sup_loss")
+
         for iter in range(bf_n_updates_per_iter):
             optimizer_bf.zero_grad()
             optimizer_ovn.zero_grad()
@@ -223,7 +234,7 @@ def run_upside_down(max_episodes):
         
         
         # monitoring desired reward and desired horizon
-        desired_rewards_history.append(episode["desired_returns"][0])
+        desired_rewards_history.append(episode["first_desired_return"])
         # and test it
         # ep_rewards = evaluate(new_desired_reward)
         all_rewards.append(np.sum(episode["rewards"]))
@@ -234,14 +245,14 @@ def run_upside_down(max_episodes):
             "q_loss": q_loss,
             "bf_loss": bf_loss,
             "ewma_G": ewma_G,
-            "desired_reward": episode["desired_returns"][0][0],
+            "desired_reward": episode["first_desired_return"][0],
             "mean_100_rewards": np.mean(all_rewards[-100:]),
         })
         
 
-        print("\rEpisode: {} | Desired Rewards: {:.2f} | Mean_100_Rewards: {:.2f} | Loss: {:.2f} | ewma_T: {} | ewma_G: {:.2f}".format(ep, episode["desired_returns"][0][0], np.mean(all_rewards[-100:]), bf_loss, int(ewma_T), ewma_G[0]), end="", flush=True)
+        print("\rEpisode: {} | Desired Rewards: {:.2f} | Mean_100_Rewards: {:.2f} | Loss: {:.2f} | ewma_T: {} | ewma_G: {:.2f}".format(ep, episode["first_desired_return"][0], np.mean(all_rewards[-100:]), bf_loss, int(ewma_T), ewma_G[0]), end="", flush=True)
         if ep % 100 == 0:
-            print("\rEpisode: {} | Desired Rewards: {:.2f} | Mean_100_Rewards: {:.2f} | Loss: {:.2f}".format(ep, episode["desired_returns"][0][0], np.mean(all_rewards[-100:]), bf_loss))
+            print("\rEpisode: {} | Desired Rewards: {:.2f} | Mean_100_Rewards: {:.2f} | Loss: {:.2f}".format(ep, episode["first_desired_return"][0], np.mean(all_rewards[-100:]), bf_loss))
             
     return all_rewards, average_100_reward, desired_rewards_history, bf_losses, explore_losses, q_losses
 
