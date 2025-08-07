@@ -31,12 +31,11 @@ max_reward = 200
 return_scale = 0.02
 replay_size = 100000
 n_warm_up_episodes = 50
-bf_n_updates_per_iter = 500
 ovn_n_updates_per_iter = 200
-n_rollout_steps_per_iter = 256
+n_rollout_steps_per_iter = 520
 top_X_eps = 50
-batch_size = 64
-learning_rate=1e-4
+batch_size = 512
+learning_rate=3e-4
 ovn_update_rate = 1e-5
 gae_lambda = 0.9
 opt_lambda = 0.9
@@ -199,7 +198,7 @@ def run_upside_down(max_episodes):
         if store_replay_buffer or ep == 858:
             replaybuffer.save_replay_buffer("observe_sup_loss")
 
-        for iter in range(bf_n_updates_per_iter):
+        for iter in range(max(int(ewma_T), n_rollout_steps_per_iter)):
             optimizer_bf.zero_grad()
             optimizer_ovn.zero_grad()
 
@@ -266,7 +265,6 @@ if __name__ == "__main__":
                     "return_scale": return_scale,
                     "replay_size": replay_size,
                     "n_warm_up_episodes": n_warm_up_episodes,
-                    "bf_n_updates_per_iter": bf_n_updates_per_iter,
                     "n_rollout_steps_per_iter": n_rollout_steps_per_iter,
                     "top_X_eps": top_X_eps,
                     "batch_size": batch_size,

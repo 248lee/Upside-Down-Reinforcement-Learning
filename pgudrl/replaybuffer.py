@@ -31,6 +31,10 @@ class ReplayBuffer():
             "dones": np.zeros((buffer_size, 1), dtype=np.float32),
             "return_to_goes": np.zeros((buffer_size, 1), dtype=np.float32),
         }
+        self.observation_min = None
+        self.observation_max = None
+        self.command_min = None
+        self.command_max = None
 
         self.pos = 0  # This is the pointer of the next sample to be added
         self.buffer_size = buffer_size  # This is the maximum size of the buffer
@@ -74,33 +78,43 @@ class ReplayBuffer():
             for key in self.buffer.keys():
                 self.buffer[key][self.pos:self.pos + length_of_episode] = episode[key]
             self.pos += length_of_episode
-        
+
+        # Update the mins and maxes
+        if self.observation_min is not None:
+            self.observation_min = np.minimum(self.observation_min, np.min(episode["observations"], axis=0))
+            self.observation_max = np.maximum(self.observation_max, np.max(episode["observations"], axis=0))
+            self.command_min = np.minimum(self.command_min, np.min(episode["return_to_goes"], axis=0))
+            self.command_max = np.maximum(self.command_max, np.max(episode["return_to_goes"], axis=0))
+        else:
+            self.observation_min = np.min(episode["observations"], axis=0)
+            self.observation_max = np.max(episode["observations"], axis=0)
+            self.command_min = np.min(episode["return_to_goes"], axis=0)
+            self.command_max = np.max(episode["return_to_goes"], axis=0)
     
     def SampleBatch(self, batch_size):
         # self.sort()
         upper_bound = self.buffer_size if self.full else self.pos
         batch_inds = np.random.randint(0, upper_bound, size=batch_size)
-        self.Standardlize()
-        data = (
-            (self.buffer["observations"][batch_inds]),
-            self.buffer["actions"][batch_inds],
+        normalized_observations, normalized_next_observations, normalized_commands = self.MinMaxNormalization(
+            self.buffer["observations"][batch_inds],
             self.buffer["next_observations"][batch_inds],
+            self.buffer["return_to_goes"][batch_inds],
+        )
+        data = (
+            normalized_observations,
+            self.buffer["actions"][batch_inds],
+            normalized_next_observations,
             self.buffer["dones"][batch_inds],
             self.buffer["rewards"][batch_inds],
-            (self.buffer["return_to_goes"][batch_inds]),
+            normalized_commands,
         )
         return ReplayBufferSamples(*map(self.to_torch, data))
 
-    def Standardlize(self):
-        if self.is_calculated_mean_and_std == False:
-            scaler = StandardScaler()
-            scaler.fit(self.buffer["observations"])
-            self.buffer["observations"] = scaler.transform(self.buffer["observations"])
-            self.buffer["next_observations"] = scaler.transform(self.buffer["next_observations"])
-            scalar = StandardScaler()
-            scalar.fit(self.buffer["return_to_goes"])
-            self.buffer["return_to_goes"] = scalar.transform(self.buffer["return_to_goes"])
-            self.is_calculated_mean_and_std = True
+    def MinMaxNormalization(self, observations, next_observations, commands):
+        normalized_observations = (observations - self.observation_min) / (self.observation_max - self.observation_min)
+        normalized_next_observations = (next_observations - self.observation_min) / (self.observation_max - self.observation_min)
+        normalized_commands = (commands - self.command_min) / (self.command_max - self.command_min)
+        return normalized_observations, normalized_next_observations, normalized_commands
     
     def GetAllData(self):
         data = (
