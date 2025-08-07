@@ -79,16 +79,25 @@ class ReplayBuffer():
         # self.sort()
         upper_bound = self.buffer_size if self.full else self.pos
         batch_inds = np.random.randint(0, upper_bound, size=batch_size)
-
+        m_state, m_command, std_state, std_command = self.GetMeanAndStd()
         data = (
-            self.buffer["observations"][batch_inds],
+            (self.buffer["observations"][batch_inds] - m_state) / std_state,
             self.buffer["actions"][batch_inds],
             self.buffer["next_observations"][batch_inds],
             self.buffer["dones"][batch_inds],
             self.buffer["rewards"][batch_inds],
-            self.buffer["return_to_goes"][batch_inds]
+            (self.buffer["return_to_goes"][batch_inds] - m_command) / std_command,
         )
         return ReplayBufferSamples(*map(self.to_torch, data))
+
+    def GetMeanAndStd(self):
+        if self.m_state == None:
+            self.m_state = np.mean(self.buffer["observations"])
+            self.m_command = np.mean(self.buffer["return_to_goes"])
+        if self.std_state == None:
+            self.std_state = np.std(self.buffer["observations"])
+            self.std_command = np.std(self.buffer["return_to_goes"])
+        return self.m_state, self.m_command, self.std_state, self.std_command
     
     def GetAllData(self):
         data = (

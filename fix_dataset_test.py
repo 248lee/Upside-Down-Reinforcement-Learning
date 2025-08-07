@@ -16,7 +16,7 @@ learning_rate=1e-4
 ovn_update_rate = 1e-5
 batch_size = 64
 
-return_scale = 0.02
+return_scale = 1
 gamma = 0.98
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 

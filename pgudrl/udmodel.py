@@ -12,7 +12,8 @@ class BF(nn.Module):  # "actor" is an alias of policy, and "critic" is an alias 
         self.actions = np.arange(action_space)
         self.action_space = action_space
         self.fc1 = nn.Linear(state_space, hidden_size)
-        self.commands = nn.Linear(1, hidden_size)  # Here, we assume 1 command: desired return
+        self.commands1 = nn.Linear(1, hidden_size)  # Here, we assume 1 command: desired return
+        self.commands2 = nn.Linear(hidden_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         self.fc3 = nn.Linear(hidden_size, hidden_size)
 
@@ -28,8 +29,9 @@ class BF(nn.Module):  # "actor" is an alias of policy, and "critic" is an alias 
         
     def forward(self, state, command):       
                
-        out = self.sigmoid(self.fc1(state))
-        command_out = self.sigmoid(self.commands(command))
+        out = torch.relu(self.fc1(state))
+        command = torch.relu(self.commands1(command))
+        command_out = self.sigmoid(self.commands2(command))
         out = out * command_out
         out = torch.relu(self.fc2(out))
         feature = torch.relu(self.fc3(out))
