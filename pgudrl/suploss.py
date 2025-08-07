@@ -18,7 +18,10 @@ def CalculateLoss(bf: BF, ovn: OptimisticValueNetwork, batch: ReplayBufferSample
     command = input_commands * bf.return_scale
     y_ = bf(state.to(bf.device), command.to(bf.device))[0].float()  # Get only the action probabilities (the first output of the BF)
     y = batch.actions.detach().clone().long()#.squeeze(-1)  # Convert y to be a 1D tensor
-    pred_loss = F.cross_entropy(y_, y)
+    
+    counts = torch.tensor([19980, 20230, 40656, 19134], dtype=torch.float32)  # from your matrix
+    class_weights = (counts.sum() / counts).to(bf.device)   # inverse frequency
+    pred_loss = F.cross_entropy(y_, y, weight=class_weights)
 
     # Exploration loss for the Behavior Function
     ovn_tmp = ovn(state)

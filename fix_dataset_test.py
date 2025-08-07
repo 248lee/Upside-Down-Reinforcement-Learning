@@ -12,9 +12,9 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix
 from tqdm import tqdm
 
-learning_rate=1e-4
+learning_rate=3e-4
 ovn_update_rate = 1e-5
-batch_size = 64
+batch_size = 512
 
 return_scale = 1
 gamma = 0.98
@@ -34,13 +34,15 @@ wandb.init(project="PGUDRL_fixed_dataset",
 # Let's create the behavior and buffer
 with open("observe_sup_loss", 'rb') as f:
     replaybuffer = pickle.load(f)
-bf = BF(state_space, action_space, hidden_size=64, return_scale=return_scale, gamma=gamma, seed=1, device=device).to(device)
+    replaybuffer.is_calculated_mean_and_std = False
+
+bf = BF(state_space, action_space, hidden_size=256, return_scale=return_scale, gamma=gamma, seed=1, device=device).to(device)
 optimizer_bf = optim.Adam(params=bf.parameters(), lr=learning_rate)
 
 ovn = OptimisticValueNetwork(state_space, action_space, hidden_size=64, gamma=gamma, seed=1, device=device).to(device)
 optimizer_ovn = optim.SGD(params=ovn.parameters(), lr=ovn_update_rate)
 
-for iter in tqdm(range(500 * 800)):
+for iter in tqdm(range(500 * 400)):
     optimizer_bf.zero_grad()
     optimizer_ovn.zero_grad()
 

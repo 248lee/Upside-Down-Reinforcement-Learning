@@ -3,6 +3,7 @@ import torch
 from typing import NamedTuple
 from gymnasium import spaces
 import pickle
+from sklearn.preprocessing import StandardScaler
 
 class ReplayBufferSamples(NamedTuple):
     observations: torch.Tensor
@@ -79,34 +80,36 @@ class ReplayBuffer():
         # self.sort()
         upper_bound = self.buffer_size if self.full else self.pos
         batch_inds = np.random.randint(0, upper_bound, size=batch_size)
-        m_state, m_command, std_state, std_command = self.GetMeanAndStd()
+        self.Standardlize()
         data = (
-            (self.buffer["observations"][batch_inds] - m_state) / std_state,
+            (self.buffer["observations"][batch_inds]),
             self.buffer["actions"][batch_inds],
             self.buffer["next_observations"][batch_inds],
             self.buffer["dones"][batch_inds],
             self.buffer["rewards"][batch_inds],
-            (self.buffer["return_to_goes"][batch_inds] - m_command) / std_command,
+            (self.buffer["return_to_goes"][batch_inds]),
         )
         return ReplayBufferSamples(*map(self.to_torch, data))
 
-    def GetMeanAndStd(self):
-        if self.m_state == None:
-            self.m_state = np.mean(self.buffer["observations"])
-            self.m_command = np.mean(self.buffer["return_to_goes"])
-        if self.std_state == None:
-            self.std_state = np.std(self.buffer["observations"])
-            self.std_command = np.std(self.buffer["return_to_goes"])
-        return self.m_state, self.m_command, self.std_state, self.std_command
+    def Standardlize(self):
+        if self.is_calculated_mean_and_std == False:
+            scaler = StandardScaler()
+            scaler.fit(self.buffer["observations"])
+            self.buffer["observations"] = scaler.transform(self.buffer["observations"])
+            self.buffer["next_observations"] = scaler.transform(self.buffer["next_observations"])
+            scalar = StandardScaler()
+            scalar.fit(self.buffer["return_to_goes"])
+            self.buffer["return_to_goes"] = scalar.transform(self.buffer["return_to_goes"])
+            self.is_calculated_mean_and_std = True
     
     def GetAllData(self):
         data = (
-            self.buffer["observations"],
+            (self.buffer["observations"]),
             self.buffer["actions"],
-            self.buffer["next_observations"],
+            (self.buffer["next_observations"]),
             self.buffer["dones"],
             self.buffer["rewards"],
-            self.buffer["return_to_goes"],
+           ( self.buffer["return_to_goes"]),
         )
         return ReplayBufferSamples(*map(self.to_torch, data))
     
