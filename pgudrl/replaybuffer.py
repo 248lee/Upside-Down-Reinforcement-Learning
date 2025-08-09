@@ -95,26 +95,35 @@ class ReplayBuffer():
         # self.sort()
         upper_bound = self.buffer_size if self.full else self.pos
         batch_inds = np.random.randint(0, upper_bound, size=batch_size)
-        normalized_observations, normalized_next_observations, normalized_commands = self.MinMaxNormalization(
-            self.buffer["observations"][batch_inds],
-            self.buffer["next_observations"][batch_inds],
-            self.buffer["return_to_goes"][batch_inds],
-        )
+        
         data = (
-            normalized_observations,
+            self.buffer["observations"][batch_inds],
             self.buffer["actions"][batch_inds],
-            normalized_next_observations,
+            self.buffer["next_observations"][batch_inds],
             self.buffer["dones"][batch_inds],
             self.buffer["rewards"][batch_inds],
-            normalized_commands,
+            self.buffer["return_to_goes"][batch_inds],
         )
         return ReplayBufferSamples(*map(self.to_torch, data))
-
+    
     def MinMaxNormalization(self, observations, next_observations, commands):
         normalized_observations = (observations - self.observation_min) / (self.observation_max - self.observation_min)
         normalized_next_observations = (next_observations - self.observation_min) / (self.observation_max - self.observation_min)
         normalized_commands = (commands - self.command_min) / (self.command_max - self.command_min)
         return normalized_observations, normalized_next_observations, normalized_commands
+
+    def ObservationMinMaxNormalization(self, observations: torch.Tensor):
+        # Convert the numpys to tensors
+        observation_min = torch.tensor(self.observation_min, dtype=torch.float32).to(self.device)
+        observation_max = torch.tensor(self.observation_max, dtype=torch.float32).to(self.device)
+        normalized_observations = (observations - observation_min) / (observation_max - observation_min)
+        return normalized_observations
+    
+    def CommandMinMaxNormalization(self, commands: torch.Tensor):
+        command_min = torch.tensor(self.command_min, dtype=torch.float32).to(self.device)
+        command_max = torch.tensor(self.command_max, dtype=torch.float32).to(self.device)
+        normalized_commands = (commands - command_min) / (command_max - command_min)
+        return normalized_commands
     
     def GetAllData(self):
         data = (

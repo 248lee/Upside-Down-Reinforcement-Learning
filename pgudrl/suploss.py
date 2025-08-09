@@ -63,8 +63,10 @@ def CalculateLoss(bf: BF, ovn: OptimisticValueNetwork, batch: ReplayBufferSample
 
     # Optimistic value network loss
     with torch.no_grad():
-        ovn_target = torch.max(q_tmp, dim=1, keepdim=True)[0]  # Get the maximum q-value for the optimistic value network
-    ovn_loss = F.mse_loss(ovn_tmp, ovn_target)
+        ovn_target =  batch.return_to_goes.detach().clone()
+    delta_value = ovn_target - ovn_tmp
+    delta_value_squared = torch.where(delta_value < 0, delta_value**2, 6 * delta_value**2)
+    ovn_loss = delta_value_squared.mean()
     
     return pred_loss, exploration_loss, value_loss, ovn_loss
 

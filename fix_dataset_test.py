@@ -36,10 +36,21 @@ with open("observe_sup_loss", 'rb') as f:
     replaybuffer = pickle.load(f)
     replaybuffer.is_calculated_mean_and_std = False
 
-bf = BF(state_space, action_space, hidden_size=256, return_scale=return_scale, gamma=gamma, seed=1, device=device).to(device)
+bf = BF(state_space, action_space, hidden_size=256, return_scale=return_scale, gamma=gamma, replay_buffer=replaybuffer, seed=1, device=device).to(device)
+is_load_bf = input("BF: are you going to load the bf_model? (y/)")
+if is_load_bf == "y":
+    bf.load_state_dict(torch.load("bf_model.pth"))
+else:
+    pass
+
 optimizer_bf = optim.Adam(params=bf.parameters(), lr=learning_rate)
 
 ovn = OptimisticValueNetwork(state_space, action_space, hidden_size=64, gamma=gamma, seed=1, device=device).to(device)
+is_load_ovn = input("OVN: are you going to load the ovn_model? (y/)")
+if is_load_ovn == "y":
+    ovn.load_state_dict(torch.load("ovn_model.pth"))
+else:
+    pass
 optimizer_ovn = optim.SGD(params=ovn.parameters(), lr=ovn_update_rate)
 
 for iter in tqdm(range(500 * 400)):

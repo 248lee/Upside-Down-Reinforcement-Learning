@@ -4,11 +4,12 @@ import numpy as np
 from torch.distributions import Categorical
 
 class BF(nn.Module):  # "actor" is an alias of policy, and "critic" is an alias of q-value function
-    def __init__(self, state_space, action_space, hidden_size, return_scale, gamma, seed, device):
+    def __init__(self, state_space, action_space, hidden_size, return_scale, gamma, replay_buffer, seed, device):
         super(BF, self).__init__()
         torch.manual_seed(seed)
         self.return_scale = return_scale
         self.device = device
+        self.replay_buffer = replay_buffer
         self.actions = np.arange(action_space)
         self.action_space = action_space
         self.fc1 = nn.Linear(state_space, hidden_size)
@@ -28,7 +29,8 @@ class BF(nn.Module):  # "actor" is an alias of policy, and "critic" is an alias 
         self.gamma = gamma
         
     def forward(self, state, command):       
-               
+        # state = self.replay_buffer.ObservationMinMaxNormalization(state)
+        # command = self.replay_buffer.CommandMinMaxNormalization(command)
         out = torch.relu(self.fc1(state))
         command = torch.relu(self.commands1(command))
         command_out = self.sigmoid(self.commands2(command))

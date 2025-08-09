@@ -28,7 +28,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 gamma = 0.98
 max_reward = 200
-return_scale = 0.02
+return_scale = 1
 replay_size = 100000
 n_warm_up_episodes = 50
 ovn_n_updates_per_iter = 200
@@ -145,7 +145,8 @@ def generate_episode(bf: BF, ovn: OptimisticValueNetwork):
 
     episode["T"] = len(episode["rewards"])
     if ovn is not None:
-        episode["first_desired_return"] = ovn(initial_state_tensor).detach().cpu().numpy()
+        with torch.no_grad():
+            episode["first_desired_return"] = ovn(initial_state_tensor).detach().cpu().numpy()
 
     return episode
 
@@ -194,9 +195,12 @@ def run_upside_down(max_episodes):
         explore_loss_buffer = []
         q_loss_buffer = []
         bf_loss_buffer = []
+        accuracy_buffer = []
 
-        if store_replay_buffer or ep == 858:
+        if store_replay_buffer or ep == 700:
             replaybuffer.save_replay_buffer("observe_sup_loss")
+            torch.save(bf.state_dict(), "bf_model.pth")
+            torch.save(ovn.state_dict(), "ovn_model.pth")
 
         for iter in range(max(int(ewma_T), n_rollout_steps_per_iter)):
             optimizer_bf.zero_grad()
@@ -206,6 +210,7 @@ def run_upside_down(max_episodes):
             # Sample a batch from the replay buffer
             batch = replaybuffer.SampleBatch(batch_size)
             bf_loss, explore_loss, q_loss, ovn_loss = suploss.CalculateLoss(bf, ovn, batch)
+            accuracy, _, _ = suploss.test_accuracy(bf, batch)
             # bf_loss = torch.tensor(0).to(device)
 
             # Combine the losses
@@ -221,6 +226,7 @@ def run_upside_down(max_episodes):
             bf_loss_buffer.append(bf_loss.item())
             explore_loss_buffer.append(explore_loss.item())
             q_loss_buffer.append(q_loss.item())
+            accuracy_buffer.append(accuracy)
 
             
         explore_loss = np.mean(explore_loss_buffer)
@@ -229,6 +235,7 @@ def run_upside_down(max_episodes):
         q_losses.append(q_loss)
         bf_loss = np.mean(bf_loss_buffer)
         bf_losses.append(bf_loss)
+        accuracy = np.mean(accuracy_buffer)
 
         
         
@@ -244,6 +251,7 @@ def run_upside_down(max_episodes):
             "q_loss": q_loss,
             "bf_loss": bf_loss,
             "ewma_G": ewma_G,
+            "accuracy": accuracy,
             "desired_reward": episode["first_desired_return"][0],
             "mean_100_rewards": np.mean(all_rewards[-100:]),
         })
@@ -274,7 +282,7 @@ if __name__ == "__main__":
     
     # Let's create the behavior and buffer
     replaybuffer = ReplayBuffer(replay_size, env.observation_space, env.action_space, device)
-    bf = BF(state_space, action_space, hidden_size=64, return_scale=return_scale, gamma=gamma, seed=1, device=device).to(device)
+    bf = BF(state_space, action_space, hidden_size=64, return_scale=return_scale, gamma=gamma, replay_buffer=replaybuffer,seed=1, device=device).to(device)
     optimizer_bf = optim.Adam(params=bf.parameters(), lr=learning_rate)
 
     ovn = OptimisticValueNetwork(state_space, action_space, hidden_size=64, gamma=gamma, seed=1, device=device).to(device)
