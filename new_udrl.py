@@ -197,7 +197,7 @@ def run_upside_down(max_episodes):
         bf_loss_buffer = []
         accuracy_buffer = []
 
-        if store_replay_buffer or ep == 700:
+        if store_replay_buffer or ep == 800:
             replaybuffer.save_replay_buffer("observe_sup_loss")
             torch.save(bf.state_dict(), "bf_model.pth")
             torch.save(ovn.state_dict(), "ovn_model.pth")
@@ -282,7 +282,7 @@ if __name__ == "__main__":
     
     # Let's create the behavior and buffer
     replaybuffer = ReplayBuffer(replay_size, env.observation_space, env.action_space, device)
-    bf = BF(state_space, action_space, hidden_size=64, return_scale=return_scale, gamma=gamma, replay_buffer=replaybuffer,seed=1, device=device).to(device)
+    bf = BF(state_space, action_space, hidden_size=256, return_scale=return_scale, gamma=gamma, replay_buffer=replaybuffer,seed=1, device=device).to(device)
     optimizer_bf = optim.Adam(params=bf.parameters(), lr=learning_rate)
 
     ovn = OptimisticValueNetwork(state_space, action_space, hidden_size=64, gamma=gamma, seed=1, device=device).to(device)
