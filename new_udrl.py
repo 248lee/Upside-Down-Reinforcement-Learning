@@ -26,9 +26,9 @@ state_space = env.observation_space.shape[0]
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-gamma = 0.98
+gamma = 0.99
 max_reward = 200
-return_scale = 1
+return_scale = 0.05
 replay_size = 100000
 n_warm_up_episodes = 50
 ovn_n_updates_per_iter = 200
@@ -90,7 +90,7 @@ def generate_episode(bf: BF, ovn: OptimisticValueNetwork):
             # desired_return_no_grad = None
         else:
             with torch.no_grad():
-                optimistic_value = ovn(state_tensor)
+                optimistic_value, _ = ovn(state_tensor)
                 desired_return = optimistic_value.detach().clone()
                 # desired_return_no_grad = desired_return.detach().cpu().numpy()
             action, log_prob, state_value = bf.action(state_tensor, desired_return)
@@ -146,7 +146,8 @@ def generate_episode(bf: BF, ovn: OptimisticValueNetwork):
     episode["T"] = len(episode["rewards"])
     if ovn is not None:
         with torch.no_grad():
-            episode["first_desired_return"] = ovn(initial_state_tensor).detach().cpu().numpy()
+            opt, _ = ovn(initial_state_tensor)
+            episode["first_desired_return"] = opt.detach().cpu().numpy()
 
     return episode
 
@@ -164,6 +165,7 @@ def run_upside_down(max_episodes):
     ewma_G = 0
     ewma_T = 0
     store_replay_buffer = False
+    scheduler = optim.lr_scheduler.StepLR(optimizer_bf, step_size=100, gamma=0.5)
 
     for ep in range(1, max_episodes+1):
         # rollout = {
@@ -197,10 +199,10 @@ def run_upside_down(max_episodes):
         bf_loss_buffer = []
         accuracy_buffer = []
 
-        if store_replay_buffer or ep == 800:
-            replaybuffer.save_replay_buffer("observe_sup_loss")
-            torch.save(bf.state_dict(), "bf_model.pth")
-            torch.save(ovn.state_dict(), "ovn_model.pth")
+        if store_replay_buffer or ep == 150 or ep == 200 or ep == 250 or ep == 300 or ep == 350:
+            replaybuffer.save_replay_buffer(f"observe_sup_loss_{ep}")
+            torch.save(bf.state_dict(), f"bf_model_pess_{ep}.pth")
+            torch.save(ovn.state_dict(), f"ovn_model_pess_{ep}.pth")
 
         for iter in range(max(int(ewma_T), n_rollout_steps_per_iter)):
             optimizer_bf.zero_grad()
@@ -228,7 +230,7 @@ def run_upside_down(max_episodes):
             q_loss_buffer.append(q_loss.item())
             accuracy_buffer.append(accuracy)
 
-            
+        scheduler.step()
         explore_loss = np.mean(explore_loss_buffer)
         explore_losses.append(explore_loss)
         q_loss = np.mean(q_loss_buffer)
@@ -253,7 +255,8 @@ def run_upside_down(max_episodes):
             "ewma_G": ewma_G,
             "accuracy": accuracy,
             "desired_reward": episode["first_desired_return"][0],
-            "mean_100_rewards": np.mean(all_rewards[-100:]),
+            "episodic_rewards": np.sum(episode["rewards"]),# np.mean(all_rewards[-100:]),
+            "learning_rate": optimizer_bf.param_groups[0]["lr"],
         })
         
 

@@ -105,6 +105,7 @@ class BF(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, state, command):
+        command = command * self.return_scale
         x = self.state_in(state)
         c = self.cmd_in(command)
         for block in self.trunk:
@@ -120,7 +121,7 @@ class BF(nn.Module):
         """
         Samples the action based on their probability
         """
-        command = (desire*self.return_scale)
+        command = (desire)
         action_prob, q_value = self.forward(state, command)
         probs = torch.softmax(action_prob, dim=-1)
         m = Categorical(probs)
@@ -131,7 +132,7 @@ class BF(nn.Module):
         """
         Returns the log probability of the action and the state value
         """
-        command = (desire*self.return_scale)
+        command = (desire)
         action_prob, q_value = self.forward(state, command)
         probs = torch.softmax(action_prob, dim=-1)
         m = Categorical(probs)
@@ -142,7 +143,7 @@ class BF(nn.Module):
         """
         Returns the greedy action 
         """
-        command = (desire*self.return_scale).unsqueeze(0)  # Ensure command is a 2D tensor
+        command = (desire).unsqueeze(0)  # Ensure command is a 2D tensor
         action_prob, _ = self.forward(state, command)
         probs = torch.softmax(action_prob, dim=-1)
         action = torch.argmax(probs).item()

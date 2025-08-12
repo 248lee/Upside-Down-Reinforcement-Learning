@@ -11,7 +11,8 @@ class OptimisticValueNetwork(nn.Module):
         self.action_space = action_space
         self.fc1 = nn.Linear(state_space, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, 1)
+        self.fc3_optimistic = nn.Linear(hidden_size, 1)
+        self.fc3_pessimistic = nn.Linear(hidden_size, 1)
 
         self.gamma = gamma
 
@@ -20,7 +21,8 @@ class OptimisticValueNetwork(nn.Module):
                
         out = torch.relu(self.fc1(state))
         out = torch.relu(self.fc2(out))
-        out = self.fc3(out)
+        optimistic_out = self.fc3_optimistic(out)
+        pessimistic_out = self.fc3_pessimistic(out)
 
-        return out
+        return optimistic_out, pessimistic_out
     

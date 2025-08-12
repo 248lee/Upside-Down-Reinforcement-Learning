@@ -1,6 +1,10 @@
 # models
 model.pth
 behaviorfunction.pth
+*.pth
+
+# datasets
+observe_sup*
 
 # wandbs
 wandb/*
