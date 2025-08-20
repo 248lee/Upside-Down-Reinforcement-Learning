@@ -1,4 +1,6 @@
 # %%
+import argparse, os
+from types import SimpleNamespace
 import numpy as np
 import torch
 import torch.nn as nn
@@ -7,7 +9,9 @@ from torch.distributions import Categorical
 import torch.nn.functional as F
 import gymnasium as gym
 import copy
+
 import wandb
+
 import matplotlib.pyplot as plt
 import argparse
 
@@ -25,21 +29,7 @@ action_space = env.action_space.n
 state_space = env.observation_space.shape[0]
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-gamma = 0.99
-max_reward = 200
-return_scale = 0.05
-replay_size = 100000
 n_warm_up_episodes = 50
-ovn_n_updates_per_iter = 200
-n_rollout_steps_per_iter = 520
-top_X_eps = 50
-batch_size = 512
-learning_rate=3e-4
-ovn_update_rate = 1e-5
-gae_lambda = 0.9
-opt_lambda = 0.9
-clip_range = 0.2
 
 
 # %%
@@ -53,7 +43,7 @@ clip_range = 0.2
 
 # %%
 # Algorithm 2 - Generates an Episode unsing the Behavior Function:
-def generate_episode(bf: BF, ovn: OptimisticValueNetwork):
+def generate_episode(bf: BF, ovn: OptimisticValueNetwork, gamma: float):
     """
     Generates more samples for the replay buffer.
     Returns a dictionary containing episode data.
@@ -152,10 +142,18 @@ def generate_episode(bf: BF, ovn: OptimisticValueNetwork):
     return episode
 
 # Algorithm 1 - Upside - Down Reinforcement Learning 
-def run_upside_down(max_episodes):
+def run_upside_down(max_episodes, config, with_bf_loss: bool = True):
     """
     
     """
+    gamma = config.gamma
+    return_scale = config.return_scale
+    replay_size = config.replay_size
+    batch_size = config.batch_size
+    n_rollout_steps_per_iter = config.n_rollout_steps_per_iter_add
+    learning_rate = config.learning_rate
+    ovn_update_rate = config.ovn_update_rate
+
     all_rewards = []
     bf_losses = []
     explore_losses = []
@@ -179,7 +177,7 @@ def run_upside_down(max_episodes):
         while rollout_step_count < n_rollout_steps_per_iter:
             
             # Sample exploratory commands based on buffer            
-            episode = generate_episode(bf, ovn)
+            episode = generate_episode(bf, ovn, gamma)
 
             rollout_step_count += episode["T"]
             ewma_G = 0.05 * episode["return_to_goes"][0] + (1 - 0.05) * ewma_G
@@ -199,10 +197,10 @@ def run_upside_down(max_episodes):
         bf_loss_buffer = []
         accuracy_buffer = []
 
-        if store_replay_buffer or ep == 150 or ep == 200 or ep == 250 or ep == 300 or ep == 350:
-            replaybuffer.save_replay_buffer(f"observe_sup_loss_{ep}")
-            torch.save(bf.state_dict(), f"bf_model_pess_{ep}.pth")
-            torch.save(ovn.state_dict(), f"ovn_model_pess_{ep}.pth")
+        # if store_replay_buffer or ep == 150 or ep == 200 or ep == 250 or ep == 300 or ep == 350:
+        #     replaybuffer.save_replay_buffer(f"observe_sup_loss_{ep}")
+        #     torch.save(bf.state_dict(), f"bf_model_pess_{ep}.pth")
+        #     torch.save(ovn.state_dict(), f"ovn_model_pess_{ep}.pth")
 
         for iter in range(max(int(ewma_T), n_rollout_steps_per_iter)):
             optimizer_bf.zero_grad()
@@ -216,7 +214,10 @@ def run_upside_down(max_episodes):
             # bf_loss = torch.tensor(0).to(device)
 
             # Combine the losses
-            total_loss = bf_loss + explore_loss + q_loss
+            if with_bf_loss:
+                total_loss = bf_loss + explore_loss + q_loss
+            else:
+                total_loss = explore_loss + q_loss
             total_loss.backward()
             optimizer_bf.step()
 
@@ -264,59 +265,116 @@ def run_upside_down(max_episodes):
         if ep % 100 == 0:
             print("\rEpisode: {} | Desired Rewards: {:.2f} | Mean_100_Rewards: {:.2f} | Loss: {:.2f}".format(ep, episode["first_desired_return"][0], np.mean(all_rewards[-100:]), bf_loss))
             
+    if with_bf_loss:
+        print("\nTraining finished with Behavior Function Loss.")
+        wandb.summary({"final_reward_with_bf_loss": np.mean(all_rewards[-30:]),})
+    else:
+        print("\nTraining finished without Behavior Function Loss.")
+        wandb.summary({"final_reward_without_bf_loss": np.mean(all_rewards[-30:]),})
+
     return all_rewards, average_100_reward, desired_rewards_history, bf_losses, explore_losses, q_losses
 
+def t_or_f(arg):
+    ua = str(arg).upper()
+    if 'TRUE'.startswith(ua): return True
+    else: return False
+
+# defaults
+default_config = SimpleNamespace(
+    gamma = 0.99,
+    return_scale = 0.05,
+    replay_size = 100000,
+    batch_size = 512,
+    n_rollout_steps_per_iter_add = 8,
+    learning_rate=3e-4,
+    ovn_update_rate = 1e-5,
+)
+
+
+def parse_args():
+    "Overriding default argments"
+    argparser = argparse.ArgumentParser(description='Process hyper-parameters')
+    argparser.add_argument('--gamma', type=float, default=default_config.gamma, help='Discount factor for rewards')
+    argparser.add_argument('--return_scale', type=float, default=default_config.return_scale, help='Scale for the return to go')
+    argparser.add_argument('--replay_size', type=int, default=default_config.replay_size, help='Size of the replay buffer')
+    argparser.add_argument('--batch_size', type=int, default=default_config.batch_size, help='Batch size for training')
+    argparser.add_argument('--n_rollout_steps_per_iter_add', type=int, default=default_config.n_rollout_steps_per_iter_add, help='Additional steps for each iteration')
+    argparser.add_argument('--learning_rate', type=float, default=default_config.learning_rate, help='Learning rate for the optimizer')
+    argparser.add_argument('--ovn_update_rate', type=float, default=default_config.ovn_update_rate, help='Learning rate for the optimistic value network')
+    args = argparser.parse_args()
+    vars(default_config).update(vars(args))
+    return
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parse_args()  # Update default_config with command line arguments
     # Let's write in wandb!
     wandb.init(project="PGUDRL",
                config={
-                    "max_reward": max_reward,
-                    "return_scale": return_scale,
-                    "replay_size": replay_size,
-                    "n_warm_up_episodes": n_warm_up_episodes,
-                    "n_rollout_steps_per_iter": n_rollout_steps_per_iter,
-                    "top_X_eps": top_X_eps,
-                    "batch_size": batch_size,
-                    "learning_rate": learning_rate,
+                    "gamma": default_config.gamma,
+                    "return_scale": default_config.return_scale,
+                    "replay_size": default_config.replay_size,
+                    "batch_size": default_config.batch_size,
+                    "n_rollout_steps_per_iter_add": default_config.n_rollout_steps_per_iter_add,
+                    "learning_rate": default_config.learning_rate,
+                    "ovn_update_rate": default_config.ovn_update_rate,
                },
                save_code=True)
     
     # Let's create the behavior and buffer
-    replaybuffer = ReplayBuffer(replay_size, env.observation_space, env.action_space, device)
-    bf = BF(state_space, action_space, hidden_size=256, return_scale=return_scale, gamma=gamma, replay_buffer=replaybuffer,seed=1, device=device).to(device)
-    optimizer_bf = optim.Adam(params=bf.parameters(), lr=learning_rate)
+    replaybuffer = ReplayBuffer(default_config.replay_size, env.observation_space, env.action_space, device)
+    bf = BF(state_space, action_space, hidden_size=256, return_scale=default_config.return_scale, gamma=default_config.gamma, replay_buffer=replaybuffer,seed=1, device=device).to(device)
+    optimizer_bf = optim.Adam(params=bf.parameters(), lr=default_config.learning_rate)
 
-    ovn = OptimisticValueNetwork(state_space, action_space, hidden_size=64, gamma=gamma, seed=1, device=device).to(device)
-    optimizer_ovn = optim.SGD(params=ovn.parameters(), lr=ovn_update_rate)
+    ovn = OptimisticValueNetwork(state_space, action_space, hidden_size=64, gamma=default_config.gamma, seed=1, device=device).to(device)
+    optimizer_ovn = optim.SGD(params=ovn.parameters(), lr=default_config.ovn_update_rate)
 
     # Start training
     # Warm up the replay buffer
-    for i in range(n_warm_up_episodes):
-        episode = generate_episode(None, None)
+    warmup_step_count = 0
+    while warmup_step_count < default_config.batch_size:
+        episode = generate_episode(None, None, gamma=default_config.gamma)
         replaybuffer.add_sample(episode)
+        warmup_step_count += episode["T"]
 
-    rewards, average, d, ud_loss, explore_losses, q_losses = run_upside_down(max_episodes=50000)
+    rewards, average, d, ud_loss, explore_losses, q_losses = run_upside_down(max_episodes=200, config=default_config, with_bf_loss=True)
+
+    # Now without the behavior function loss
+    replaybuffer = ReplayBuffer(default_config.replay_size, env.observation_space, env.action_space, device)
+    bf = BF(state_space, action_space, hidden_size=256, return_scale=default_config.return_scale, gamma=default_config.gamma, replay_buffer=replaybuffer,seed=1, device=device).to(device)
+    optimizer_bf = optim.Adam(params=bf.parameters(), lr=default_config.learning_rate)
+
+    ovn = OptimisticValueNetwork(state_space, action_space, hidden_size=64, gamma=default_config.gamma, seed=1, device=device).to(device)
+    optimizer_ovn = optim.SGD(params=ovn.parameters(), lr=default_config.ovn_update_rate)
+
+    # Start training
+    # Warm up the replay buffer
+    warmup_step_count = 0
+    while warmup_step_count < default_config.batch_size:
+        episode = generate_episode(None, None, gamma=default_config.gamma)
+        replaybuffer.add_sample(episode)
+        warmup_step_count += episode["T"]
+
+    rewards, average, d, ud_loss, explore_losses, q_losses = run_upside_down(max_episodes=200, config=default_config, with_bf_loss=False)
 
     # Finish training
-    torch.save(bf.state_dict(), "behaviorfunction.pth")
-    plt.figure(figsize=(15,8))
-    plt.subplot(2,2,1)
-    plt.title("Rewards")
-    plt.plot(rewards, label="rewards")
-    plt.plot(average, label="average100")
-    plt.legend()
-    plt.subplot(2,2,2)
-    plt.title("UD Loss")
-    plt.plot(ud_loss)
-    plt.subplot(2,2,3)
-    plt.title("desired Rewards")
-    plt.plot(d)
-    plt.subplot(2,2,4)
-    plt.title("Explore Loss")
-    plt.plot(explore_losses)
-    plt.show()
+    # torch.save(bf.state_dict(), "behaviorfunction.pth")
+    # plt.figure(figsize=(15,8))
+    # plt.subplot(2,2,1)
+    # plt.title("Rewards")
+    # plt.plot(rewards, label="rewards")
+    # plt.plot(average, label="average100")
+    # plt.legend()
+    # plt.subplot(2,2,2)
+    # plt.title("UD Loss")
+    # plt.plot(ud_loss)
+    # plt.subplot(2,2,3)
+    # plt.title("desired Rewards")
+    # plt.plot(d)
+    # plt.subplot(2,2,4)
+    # plt.title("Explore Loss")
+    # plt.plot(explore_losses)
+    # plt.show()
 
     # %%
     # SAVE MODEL
