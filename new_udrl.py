@@ -1,5 +1,6 @@
 # %%
 import argparse, os
+import time
 from types import SimpleNamespace
 import numpy as np
 import torch
@@ -196,23 +197,33 @@ def run_upside_down(max_episodes, config, with_bf_loss: bool = True):
         q_loss_buffer = []
         bf_loss_buffer = []
         accuracy_buffer = []
+        delta_times_buffer = []
+        delta_times_buffer_calculate_loss = []
+        delta_times_buffer_backward = []
 
         # if store_replay_buffer or ep == 150 or ep == 200 or ep == 250 or ep == 300 or ep == 350:
         #     replaybuffer.save_replay_buffer(f"observe_sup_loss_{ep}")
         #     torch.save(bf.state_dict(), f"bf_model_pess_{ep}.pth")
         #     torch.save(ovn.state_dict(), f"ovn_model_pess_{ep}.pth")
-
+        
         for iter in range(max(int(ewma_T), n_rollout_steps_per_iter)):
             optimizer_bf.zero_grad()
             optimizer_ovn.zero_grad()
 
             # Calculate the supervised loss
             # Sample a batch from the replay buffer
+            time_before_sample = time.time()
             batch = replaybuffer.SampleBatch(batch_size)
+            time_after_sample = time.time()
+            delta_times_buffer.append(time_after_sample - time_before_sample)
+            time_before_calculating_loss = time.time()
             bf_loss, explore_loss, q_loss, ovn_loss = suploss.CalculateLoss(bf, ovn, batch)
+            time_after_calculating_loss = time.time()
+            delta_times_buffer_calculate_loss.append(time_after_calculating_loss - time_before_calculating_loss)
             accuracy, _, _ = suploss.test_accuracy(bf, batch)
             # bf_loss = torch.tensor(0).to(device)
 
+            time_before_backward = time.time()
             # Combine the losses
             if with_bf_loss:
                 total_loss = bf_loss + explore_loss + q_loss
@@ -225,6 +236,8 @@ def run_upside_down(max_episodes, config, with_bf_loss: bool = True):
             ovn_loss.backward()
             optimizer_ovn.step()
 
+            time_after_backward = time.time()
+            delta_times_buffer_backward.append(time_after_backward - time_before_backward)
             # Log the loss
             bf_loss_buffer.append(bf_loss.item())
             explore_loss_buffer.append(explore_loss.item())
@@ -239,7 +252,9 @@ def run_upside_down(max_episodes, config, with_bf_loss: bool = True):
         bf_loss = np.mean(bf_loss_buffer)
         bf_losses.append(bf_loss)
         accuracy = np.mean(accuracy_buffer)
-
+        delta_time = np.mean(delta_times_buffer)
+        delta_time_calculate_loss = np.mean(delta_times_buffer_calculate_loss)
+        delta_time_backward = np.mean(delta_times_buffer_backward)
         
         
         # monitoring desired reward and desired horizon
@@ -261,7 +276,7 @@ def run_upside_down(max_episodes, config, with_bf_loss: bool = True):
         })
         
 
-        print("\rEpisode: {} | Desired Rewards: {:.2f} | Mean_100_Rewards: {:.2f} | Loss: {:.2f} | ewma_T: {} | ewma_G: {:.2f}".format(ep, episode["first_desired_return"][0], np.mean(all_rewards[-100:]), bf_loss, int(ewma_T), ewma_G[0]), end="", flush=True)
+        print("\rewma_T: {} | ewma_G: {:.2f} | dTime: {:.5f} | dTime_cL: {:.5f} | dTime_bk: {:.5f}".format(int(ewma_T), ewma_G[0], delta_time, delta_time_calculate_loss, delta_time_backward), end="", flush=True)
         if ep % 100 == 0:
             print("\rEpisode: {} | Desired Rewards: {:.2f} | Mean_100_Rewards: {:.2f} | Loss: {:.2f}".format(ep, episode["first_desired_return"][0], np.mean(all_rewards[-100:]), bf_loss))
             
@@ -285,7 +300,7 @@ default_config = SimpleNamespace(
     return_scale = 0.05,
     replay_size = 100000,
     batch_size = 512,
-    n_rollout_steps_per_iter_add = 8,
+    n_rollout_steps_per_iter_add = 520,
     learning_rate=3e-4,
     ovn_update_rate = 1e-5,
 )
