@@ -267,10 +267,10 @@ def run_upside_down(max_episodes, config, with_bf_loss: bool = True):
             
     if with_bf_loss:
         print("\nTraining finished with Behavior Function Loss.")
-        wandb.summary({"final_reward_with_bf_loss": np.mean(all_rewards[-30:]),})
+        wandb.summary["final_reward_with_bf_loss"] = np.mean(all_rewards[-30:])
     else:
         print("\nTraining finished without Behavior Function Loss.")
-        wandb.summary({"final_reward_without_bf_loss": np.mean(all_rewards[-30:]),})
+        wandb.summary["final_reward_without_bf_loss"] = np.mean(all_rewards[-30:])
 
     return all_rewards, average_100_reward, desired_rewards_history, bf_losses, explore_losses, q_losses
 
