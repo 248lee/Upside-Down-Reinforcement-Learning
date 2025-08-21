@@ -62,19 +62,10 @@ def CalculateLoss(bf: BF, ovn: OptimisticValueNetwork, batch: ReplayBufferSample
     q_values_selected = torch.gather(q_tmp, 1, batch.actions.to(torch.int64).unsqueeze(1))
     value_loss_explore = F.mse_loss(q_values_selected, targets.detach())
 
-    with torch.no_grad():  # although old q values are not used in the training process, it is useful in the testing process
-        next_states = batch.next_observations.detach().clone()
-        next_desired_return_to_go = (batch.return_to_goes- batch.rewards) / bf.gamma
-        next_command = next_desired_return_to_go# * bf.return_scale
-        next_y, next_q_values = bf(next_states.to(bf.device), next_command.to(bf.device))
-        next_policy = torch.softmax(next_y.float(), dim=-1)
-        # This is the expected-SARSA
-        next_value = torch.sum(next_q_values * next_policy, dim=1, keepdim=True)  # Dot product of the next q-values and the next policy
-        targets = batch.rewards + bf.gamma * next_value * (1 - batch.dones)
-    q_values_selected = torch.gather(q_, 1, batch.actions.to(torch.int64).unsqueeze(1))
-    value_loss_recall = F.mse_loss(q_values_selected, targets.detach())
-
-    value_loss = (value_loss_explore + value_loss_recall) / 2
+    value_loss = (value_loss_explore )
+    if torch.any((q_values_selected - targets.detach())**2 > 1e6):
+        max_val = torch.max((q_values_selected - targets.detach())**2)
+        print(f"⚠️  Warning: (q_values_selected - targets.detach())**2 contains values as large as {max_val:.2e} (>|1e6|).")
 
     # Optimistic value network loss
     with torch.no_grad():
@@ -83,9 +74,13 @@ def CalculateLoss(bf: BF, ovn: OptimisticValueNetwork, batch: ReplayBufferSample
         ovn_target = torch.maximum(buffer_return, max_q)
     delta_value_opt = ovn_target - ovn_tmp
     delta_value_squared_opt = torch.where(delta_value_opt < 0, delta_value_opt**2, 12 * delta_value_opt**2)
-    delta_value_pes = buffer_return - pes_tmp  # although pessimistic values are not used in the training process, it is useful in the testing process
-    delta_value_squared_pes = torch.where(delta_value_pes < 0, 15 * delta_value_pes**2, delta_value_pes**2)
-    ovn_loss = delta_value_squared_opt.mean() + delta_value_squared_pes.mean()
+    # delta_value_pes = buffer_return - pes_tmp  # although pessimistic values are not used in the training process, it is useful in the testing process
+    # delta_value_squared_pes = torch.where(delta_value_pes < 0, 15 * delta_value_pes**2, delta_value_pes**2)
+    ovn_loss = delta_value_squared_opt.mean()
+    if torch.any(torch.abs(delta_value_squared_opt) > 1e6):
+        max_val = torch.max(torch.abs(delta_value_squared_opt))
+        print(f"⚠️  Warning: delta_value_squared_opt contains values as large as {max_val:.2e} (>|1e6|).")
+    
     
     return pred_loss, exploration_loss, value_loss, ovn_loss
 
